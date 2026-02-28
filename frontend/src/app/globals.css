@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f5f8;
+  --foreground: #18191f;
+  --surface: #ffffff;
+  --border: #dedfe5;
+  --muted: #5f6472;
+  --accent: #d50c2d;
+  --accent-strong: #b00925;
+  --accent-soft: #ffe7ec;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --font-sans: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  background-image:
+    radial-gradient(circle at 12% 10%, rgba(213, 12, 45, 0.12), transparent 38%),
+    radial-gradient(circle at 88% 0%, rgba(213, 12, 45, 0.09), transparent 30%),
+    linear-gradient(180deg, #f8f8fa 0%, #f2f3f8 100%);
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: var(--accent);
+  color: white;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
