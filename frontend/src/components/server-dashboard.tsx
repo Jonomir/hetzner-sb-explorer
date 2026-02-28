@@ -241,9 +241,16 @@ function SortHeader({
 export function ServerDashboard({ data }: { data: DashboardData }) {
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
   const [cpuVendor, setCpuVendor] = useState("all");
+  const [cpuNameQuery, setCpuNameQuery] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [minRam, setMinRam] = useState("");
   const [minCores, setMinCores] = useState("");
+  const [minHddTb, setMinHddTb] = useState("");
+  const [minSataTb, setMinSataTb] = useState("");
+  const [minNvmeTb, setMinNvmeTb] = useState("");
+  const [minHddDriveTb, setMinHddDriveTb] = useState("");
+  const [minSataDriveTb, setMinSataDriveTb] = useState("");
+  const [minNvmeDriveTb, setMinNvmeDriveTb] = useState("");
   const [eccOnly, setEccOnly] = useState(false);
   const [gpuOnly, setGpuOnly] = useState(false);
   const [inicOnly, setInicOnly] = useState(false);
@@ -253,6 +260,7 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
   const [expandedServerId, setExpandedServerId] = useState<number | null>(null);
   const [sorting, setSorting] = useState<SortingState>([{ id: "cpu_per_price", desc: true }]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
+  const [showAdvancedDriveFilters, setShowAdvancedDriveFilters] = useState(false);
   const [nowMs, setNowMs] = useState(() => {
     const parsed = Date.parse(data.loadedAtUtc);
     return Number.isNaN(parsed) ? Date.now() : parsed;
@@ -261,13 +269,21 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
   const maxPriceValue = parseInputNumber(maxPrice);
   const minRamValue = parseInputNumber(minRam);
   const minCoresValue = parseInputNumber(minCores);
+  const minHddTbValue = parseInputNumber(minHddTb);
+  const minSataTbValue = parseInputNumber(minSataTb);
+  const minNvmeTbValue = parseInputNumber(minNvmeTb);
+  const minHddDriveTbValue = parseInputNumber(minHddDriveTb);
+  const minSataDriveTbValue = parseInputNumber(minSataDriveTb);
+  const minNvmeDriveTbValue = parseInputNumber(minNvmeDriveTb);
 
   const filteredServers = useMemo(() => {
+    const cpuQuery = cpuNameQuery.trim().toLowerCase();
     return data.servers.filter((row) => {
       if (selectedRegions.length > 0) {
         if (!row.region || !selectedRegions.includes(row.region)) return false;
       }
       if (cpuVendor !== "all" && row.cpu_vendor !== cpuVendor) return false;
+      if (cpuQuery && !row.cpu.toLowerCase().includes(cpuQuery)) return false;
       if (maxPriceValue != null && (row.price == null || row.price > maxPriceValue)) return false;
       if (minRamValue != null && (row.ram_size == null || row.ram_size < minRamValue)) return false;
       if (minCoresValue != null && (row.bench_cores == null || row.bench_cores < minCoresValue)) return false;
@@ -277,9 +293,25 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
       if (needsHdd && row.has_hdd !== 1) return false;
       if (needsSata && row.has_sata !== 1) return false;
       if (needsNvme && row.has_nvme !== 1) return false;
+      if (minHddTbValue != null && (row.disk_hdd_total_gb == null || row.disk_hdd_total_gb < minHddTbValue * 1000)) return false;
+      if (minSataTbValue != null && (row.disk_sata_total_gb == null || row.disk_sata_total_gb < minSataTbValue * 1000)) return false;
+      if (minNvmeTbValue != null && (row.disk_nvme_total_gb == null || row.disk_nvme_total_gb < minNvmeTbValue * 1000)) return false;
+      if (minHddDriveTbValue != null) {
+        const hddSizes = parseJsonNumberList(row.disk_hdd_sizes_json);
+        if (!hddSizes.some((sizeGb) => sizeGb >= minHddDriveTbValue * 1000)) return false;
+      }
+      if (minSataDriveTbValue != null) {
+        const sataSizes = parseJsonNumberList(row.disk_sata_sizes_json);
+        if (!sataSizes.some((sizeGb) => sizeGb >= minSataDriveTbValue * 1000)) return false;
+      }
+      if (minNvmeDriveTbValue != null) {
+        const nvmeSizes = parseJsonNumberList(row.disk_nvme_sizes_json);
+        if (!nvmeSizes.some((sizeGb) => sizeGb >= minNvmeDriveTbValue * 1000)) return false;
+      }
       return true;
     });
   }, [
+    cpuNameQuery,
     cpuVendor,
     data.servers,
     eccOnly,
@@ -287,7 +319,13 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
     inicOnly,
     maxPriceValue,
     minCoresValue,
+    minHddDriveTbValue,
+    minHddTbValue,
+    minNvmeDriveTbValue,
+    minNvmeTbValue,
     minRamValue,
+    minSataDriveTbValue,
+    minSataTbValue,
     needsHdd,
     needsNvme,
     needsSata,
@@ -299,9 +337,16 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
   }, [
     selectedRegions,
     cpuVendor,
+    cpuNameQuery,
     maxPrice,
     minRam,
     minCores,
+    minHddTb,
+    minSataTb,
+    minNvmeTb,
+    minHddDriveTb,
+    minSataDriveTb,
+    minNvmeDriveTb,
     eccOnly,
     gpuOnly,
     inicOnly,
@@ -434,9 +479,16 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
   const clearFilters = () => {
     setSelectedRegions([]);
     setCpuVendor("all");
+    setCpuNameQuery("");
     setMaxPrice("");
     setMinRam("");
     setMinCores("");
+    setMinHddTb("");
+    setMinSataTb("");
+    setMinNvmeTb("");
+    setMinHddDriveTb("");
+    setMinSataDriveTb("");
+    setMinNvmeDriveTb("");
     setEccOnly(false);
     setGpuOnly(false);
     setInicOnly(false);
@@ -497,7 +549,7 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
             </div>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <label>
               <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                 CPU Vendor
@@ -514,6 +566,19 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
                   </option>
                 ))}
               </select>
+            </label>
+
+            <label>
+              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                CPU Name
+              </span>
+              <input
+                className="w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] transition focus:ring-2"
+                onChange={(event) => setCpuNameQuery(event.target.value)}
+                placeholder="e.g. EPYC 7502P"
+                type="text"
+                value={cpuNameQuery}
+              />
             </label>
 
             <label>
@@ -664,6 +729,179 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
             >
               Clear Filters
             </button>
+          </div>
+
+          <div className="mt-3 rounded-xl border border-[var(--border)] bg-white p-3">
+            <button
+              className="flex w-full items-center justify-between text-left"
+              onClick={() => setShowAdvancedDriveFilters((open) => !open)}
+              type="button"
+            >
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Advanced Drive Filters
+              </span>
+              <span className="text-sm font-semibold text-slate-700">
+                {showAdvancedDriveFilters ? "Hide" : "Show"}
+              </span>
+            </button>
+
+            {showAdvancedDriveFilters ? (
+              <div className="mt-3 space-y-3">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label>
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Min HDD Total (TB)
+                    </span>
+                    <input
+                      className="w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] transition focus:ring-2"
+                      inputMode="decimal"
+                      min={0}
+                      onChange={(event) => onNumericInputChange(setMinHddTb, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          onArrowStep(minHddTb, setMinHddTb, 1);
+                        } else if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          onArrowStep(minHddTb, setMinHddTb, -1);
+                        }
+                      }}
+                      placeholder="e.g. 4"
+                      step={0.5}
+                      type="number"
+                      value={minHddTb}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Min SATA Total (TB)
+                    </span>
+                    <input
+                      className="w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] transition focus:ring-2"
+                      inputMode="decimal"
+                      min={0}
+                      onChange={(event) => onNumericInputChange(setMinSataTb, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          onArrowStep(minSataTb, setMinSataTb, 1);
+                        } else if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          onArrowStep(minSataTb, setMinSataTb, -1);
+                        }
+                      }}
+                      placeholder="e.g. 2"
+                      step={0.5}
+                      type="number"
+                      value={minSataTb}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Min NVMe Total (TB)
+                    </span>
+                    <input
+                      className="w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] transition focus:ring-2"
+                      inputMode="decimal"
+                      min={0}
+                      onChange={(event) => onNumericInputChange(setMinNvmeTb, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          onArrowStep(minNvmeTb, setMinNvmeTb, 1);
+                        } else if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          onArrowStep(minNvmeTb, setMinNvmeTb, -1);
+                        }
+                      }}
+                      placeholder="e.g. 4"
+                      step={0.5}
+                      type="number"
+                      value={minNvmeTb}
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label>
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Min HDD Drive (TB)
+                    </span>
+                    <input
+                      className="w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] transition focus:ring-2"
+                      inputMode="decimal"
+                      min={0}
+                      onChange={(event) => onNumericInputChange(setMinHddDriveTb, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          onArrowStep(minHddDriveTb, setMinHddDriveTb, 1);
+                        } else if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          onArrowStep(minHddDriveTb, setMinHddDriveTb, -1);
+                        }
+                      }}
+                      placeholder="e.g. 4"
+                      step={0.5}
+                      type="number"
+                      value={minHddDriveTb}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Min SATA Drive (TB)
+                    </span>
+                    <input
+                      className="w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] transition focus:ring-2"
+                      inputMode="decimal"
+                      min={0}
+                      onChange={(event) => onNumericInputChange(setMinSataDriveTb, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          onArrowStep(minSataDriveTb, setMinSataDriveTb, 1);
+                        } else if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          onArrowStep(minSataDriveTb, setMinSataDriveTb, -1);
+                        }
+                      }}
+                      placeholder="e.g. 2"
+                      step={0.5}
+                      type="number"
+                      value={minSataDriveTb}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Min NVMe Drive (TB)
+                    </span>
+                    <input
+                      className="w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] transition focus:ring-2"
+                      inputMode="decimal"
+                      min={0}
+                      onChange={(event) => onNumericInputChange(setMinNvmeDriveTb, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          onArrowStep(minNvmeDriveTb, setMinNvmeDriveTb, 1);
+                        } else if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          onArrowStep(minNvmeDriveTb, setMinNvmeDriveTb, -1);
+                        }
+                      }}
+                      placeholder="e.g. 2"
+                      step={0.5}
+                      type="number"
+                      value={minNvmeDriveTb}
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : null}
           </div>
         </section>
 
