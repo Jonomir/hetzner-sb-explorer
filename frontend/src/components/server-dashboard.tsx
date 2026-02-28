@@ -59,6 +59,18 @@ function parseJsonList(text: string): string[] {
   }
 }
 
+function parseJsonNumberList(text: string): number[] {
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => Number(item))
+      .filter((value) => Number.isFinite(value) && value > 0);
+  } catch {
+    return [];
+  }
+}
+
 function formatMoney(value: number | null): string {
   if (value == null) return "—";
   return euroFormatter.format(value);
@@ -166,6 +178,14 @@ function drivePill(label: string, count: number | null, totalGb: number | null) 
       <span className="whitespace-nowrap text-[11px] font-medium">{formatStorageGb(totalGb)} total</span>
     </span>
   );
+}
+
+function driveTooltip(label: string, sizesGb: number[]): string {
+  if (sizesGb.length === 0) {
+    return `No ${label} drives`;
+  }
+  const items = sizesGb.map((size) => `- ${formatStorageGb(size)}`);
+  return `${label} drives:\n${items.join("\n")}`;
 }
 
 function SortHeader({
@@ -302,13 +322,25 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
           (row.disk_hdd_count ?? 0) + (row.disk_sata_count ?? 0) + (row.disk_nvme_count ?? 0),
         sortingFn: numberSortNullLast,
         header: ({ column }) => <SortHeader column={column} title="Drives" />,
-        cell: ({ row }) => (
-          <div className="flex flex-nowrap gap-1">
-            {drivePill("HDD", row.original.disk_hdd_count, row.original.disk_hdd_total_gb)}
-            {drivePill("SATA", row.original.disk_sata_count, row.original.disk_sata_total_gb)}
-            {drivePill("NVMe", row.original.disk_nvme_count, row.original.disk_nvme_total_gb)}
-          </div>
-        ),
+        cell: ({ row }) => {
+          const hddSizes = parseJsonNumberList(row.original.disk_hdd_sizes_json);
+          const sataSizes = parseJsonNumberList(row.original.disk_sata_sizes_json);
+          const nvmeSizes = parseJsonNumberList(row.original.disk_nvme_sizes_json);
+
+          return (
+            <div className="flex flex-nowrap gap-1">
+              <span title={driveTooltip("HDD", hddSizes)}>
+                {drivePill("HDD", row.original.disk_hdd_count, row.original.disk_hdd_total_gb)}
+              </span>
+              <span title={driveTooltip("SATA", sataSizes)}>
+                {drivePill("SATA", row.original.disk_sata_count, row.original.disk_sata_total_gb)}
+              </span>
+              <span title={driveTooltip("NVMe", nvmeSizes)}>
+                {drivePill("NVMe", row.original.disk_nvme_count, row.original.disk_nvme_total_gb)}
+              </span>
+            </div>
+          );
+        },
       },
       {
         accessorKey: "price",
