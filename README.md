@@ -59,9 +59,9 @@ Core tables:
     - `has_inic`
   - includes `drive_count` (total drives from Hetzner feed)
   - includes canonical drive columns:
-    - `disk_hdd_count`, `disk_hdd_total_gb`
-    - `disk_sata_count`, `disk_sata_total_gb`
-    - `disk_nvme_count`, `disk_nvme_total_gb`
+    - `disk_hdd_count`, `disk_hdd_total_gb`, `disk_hdd_sizes_json`
+    - `disk_sata_count`, `disk_sata_total_gb`, `disk_sata_sizes_json`
+    - `disk_nvme_count`, `disk_nvme_total_gb`, `disk_nvme_sizes_json`
   - includes passthrough detail JSON columns for expandable frontend rows:
     - `information_json`
     - `description_json`

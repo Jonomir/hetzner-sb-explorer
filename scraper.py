@@ -59,10 +59,13 @@ CREATE TABLE IF NOT EXISTS sb_server (
     drive_count INTEGER,
     disk_hdd_count INTEGER,
     disk_hdd_total_gb REAL,
+    disk_hdd_sizes_json TEXT,
     disk_sata_count INTEGER,
     disk_sata_total_gb REAL,
+    disk_sata_sizes_json TEXT,
     disk_nvme_count INTEGER,
     disk_nvme_total_gb REAL,
+    disk_nvme_sizes_json TEXT,
     traffic TEXT,
     bandwidth INTEGER,
     is_ecc INTEGER,
@@ -129,10 +132,13 @@ SELECT
     s.drive_count,
     s.disk_hdd_count,
     s.disk_hdd_total_gb,
+    s.disk_hdd_sizes_json,
     s.disk_sata_count,
     s.disk_sata_total_gb,
+    s.disk_sata_sizes_json,
     s.disk_nvme_count,
     s.disk_nvme_total_gb,
+    s.disk_nvme_sizes_json,
     CASE WHEN s.disk_hdd_count > 0 THEN 1 ELSE 0 END AS has_hdd,
     CASE WHEN s.disk_sata_count > 0 THEN 1 ELSE 0 END AS has_sata,
     CASE WHEN s.disk_nvme_count > 0 THEN 1 ELSE 0 END AS has_nvme,
@@ -400,23 +406,35 @@ def derive_cpu_vendor(cpu: str) -> str:
     return "Unknown"
 
 
-def parse_drive_list(values: Any) -> tuple[int, float]:
+def parse_drive_list(values: Any) -> tuple[list[float], int, float]:
     if not isinstance(values, list):
-        return (0, 0.0)
+        return ([], 0, 0.0)
     nums = [parse_numeric(v) for v in values]
-    clean = [v for v in nums if v is not None and v > 0]
-    return (len(clean), float(sum(clean)))
+    clean = [float(v) for v in nums if v is not None and v > 0]
+    return (clean, len(clean), float(sum(clean)))
 
 
-def extract_disk_stats(server: dict[str, Any]) -> tuple[int, float, int, float, int, float]:
+def extract_disk_stats(
+    server: dict[str, Any],
+) -> tuple[int, float, str, int, float, str, int, float, str]:
     disk_data = server.get("serverDiskData")
     if not isinstance(disk_data, dict):
-        return (0, 0.0, 0, 0.0, 0, 0.0)
+        return (0, 0.0, "[]", 0, 0.0, "[]", 0, 0.0, "[]")
 
-    hdd_count, hdd_total = parse_drive_list(disk_data.get("hdd"))
-    sata_count, sata_total = parse_drive_list(disk_data.get("sata"))
-    nvme_count, nvme_total = parse_drive_list(disk_data.get("nvme"))
-    return (hdd_count, hdd_total, sata_count, sata_total, nvme_count, nvme_total)
+    hdd_sizes, hdd_count, hdd_total = parse_drive_list(disk_data.get("hdd"))
+    sata_sizes, sata_count, sata_total = parse_drive_list(disk_data.get("sata"))
+    nvme_sizes, nvme_count, nvme_total = parse_drive_list(disk_data.get("nvme"))
+    return (
+        hdd_count,
+        hdd_total,
+        serialize_json_array(hdd_sizes),
+        sata_count,
+        sata_total,
+        serialize_json_array(sata_sizes),
+        nvme_count,
+        nvme_total,
+        serialize_json_array(nvme_sizes),
+    )
 
 
 def extract_special_flags(server: dict[str, Any]) -> tuple[int, int]:
@@ -551,10 +569,13 @@ def run_sb_sync(db_path: Path) -> tuple[int, int, int]:
             (
                 disk_hdd_count,
                 disk_hdd_total_gb,
+                disk_hdd_sizes_json,
                 disk_sata_count,
                 disk_sata_total_gb,
+                disk_sata_sizes_json,
                 disk_nvme_count,
                 disk_nvme_total_gb,
+                disk_nvme_sizes_json,
             ) = extract_disk_stats(s)
             has_gpu, has_inic = extract_special_flags(s)
             information_json = serialize_json_array(s.get("information"))
@@ -579,10 +600,13 @@ def run_sb_sync(db_path: Path) -> tuple[int, int, int]:
                     drive_count,
                     disk_hdd_count,
                     disk_hdd_total_gb,
+                    disk_hdd_sizes_json,
                     disk_sata_count,
                     disk_sata_total_gb,
+                    disk_sata_sizes_json,
                     disk_nvme_count,
                     disk_nvme_total_gb,
+                    disk_nvme_sizes_json,
                     str(s.get("traffic") or ""),
                     parse_int(s.get("bandwidth")),
                     parse_bool_int(s.get("is_ecc")),
@@ -629,11 +653,12 @@ def run_sb_sync(db_path: Path) -> tuple[int, int, int]:
                 INSERT INTO sb_server (
                     server_id, "key", name, cpu, cpu_norm, cpu_vendor, datacenter, region, price,
                     setup_price, hourly_price, ram_size, drive_count,
-                    disk_hdd_count, disk_hdd_total_gb, disk_sata_count, disk_sata_total_gb,
-                    disk_nvme_count, disk_nvme_total_gb,
+                    disk_hdd_count, disk_hdd_total_gb, disk_hdd_sizes_json,
+                    disk_sata_count, disk_sata_total_gb, disk_sata_sizes_json,
+                    disk_nvme_count, disk_nvme_total_gb, disk_nvme_sizes_json,
                     traffic, bandwidth, is_ecc, has_gpu, has_inic, is_highio,
                     information_json, description_json, hdd_arr_json, dist_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 sb_rows,
             )

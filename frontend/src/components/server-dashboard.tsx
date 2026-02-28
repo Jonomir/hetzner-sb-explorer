@@ -151,19 +151,19 @@ function SectionList({ title, entries }: { title: string; entries: string[] }) {
   );
 }
 
-function drivePill(label: string, count: number | null) {
+function drivePill(label: string, count: number | null, totalGb: number | null) {
   const safeCount = count ?? 0;
   const enabled = safeCount > 0;
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${
+      className={`inline-flex w-[118px] flex-col rounded-2xl px-2 py-1.5 text-xs font-semibold leading-tight tabular-nums ${
         enabled
           ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
           : "bg-slate-100 text-slate-500"
       }`}
     >
-      <span>{label}</span>
-      <span>{safeCount}</span>
+      <span className="whitespace-nowrap">{safeCount}x {label}</span>
+      <span className="whitespace-nowrap text-[11px] font-medium">{formatStorageGb(totalGb)} total</span>
     </span>
   );
 }
@@ -281,7 +281,7 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
       {
         accessorKey: "cpu",
         header: ({ column }) => <SortHeader column={column} title="CPU" />,
-        cell: ({ row }) => <div className="min-w-[14rem] text-slate-900">{row.original.cpu}</div>,
+        cell: ({ row }) => <div className="text-slate-900">{row.original.cpu}</div>,
       },
       {
         id: "cores_threads",
@@ -303,10 +303,10 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
         sortingFn: numberSortNullLast,
         header: ({ column }) => <SortHeader column={column} title="Drives" />,
         cell: ({ row }) => (
-          <div className="flex flex-wrap gap-1">
-            {drivePill("HDD", row.original.disk_hdd_count)}
-            {drivePill("SATA", row.original.disk_sata_count)}
-            {drivePill("NVMe", row.original.disk_nvme_count)}
+          <div className="flex flex-nowrap gap-1">
+            {drivePill("HDD", row.original.disk_hdd_count, row.original.disk_hdd_total_gb)}
+            {drivePill("SATA", row.original.disk_sata_count, row.original.disk_sata_total_gb)}
+            {drivePill("NVMe", row.original.disk_nvme_count, row.original.disk_nvme_total_gb)}
           </div>
         ),
       },
@@ -618,7 +618,7 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
 
           <div className="overflow-hidden rounded-xl border border-[var(--border)]">
             <div className="overflow-x-auto">
-              <table className="min-w-[1200px] w-full border-collapse text-sm">
+              <table className="w-full min-w-[1200px] border-collapse text-sm">
                 <thead className="bg-slate-50">
                   {table.getHeaderGroups().map((headerGroup) => (
                     <tr key={headerGroup.id}>
@@ -643,6 +643,12 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
                     rows.map((row) => {
                       const isExpanded = expandedServerId === row.original.server_id;
                       const information = parseJsonList(row.original.information_json);
+                      const auctionUrl = `https://www.hetzner.com/sb/#search=${row.original.server_id}`;
+                      const informationWithNetwork = [
+                        ...information,
+                        `Bandwidth: ${row.original.bandwidth ?? "—"} Mbit/s`,
+                        `Traffic: ${row.original.traffic || "—"}`,
+                      ];
                       const hddArr = parseJsonList(row.original.hdd_arr_json);
 
                       return (
@@ -665,21 +671,33 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
                             <tr className="border-b border-[var(--border)] bg-slate-50/70">
                               <td className="px-4 py-4" colSpan={columns.length}>
                                 <div className="grid gap-4 md:grid-cols-2">
-                                  <section className="rounded-lg border border-[var(--border)] bg-white p-3">
-                                    <h4 className="mb-2 text-sm font-semibold text-slate-700">Storage Breakdown</h4>
-                                    <div className="space-y-1 text-sm text-slate-600">
-                                      <p>HDD: {row.original.disk_hdd_count ?? 0} ({formatStorageGb(row.original.disk_hdd_total_gb)})</p>
-                                      <p>SATA SSD: {row.original.disk_sata_count ?? 0} ({formatStorageGb(row.original.disk_sata_total_gb)})</p>
-                                      <p>NVMe SSD: {row.original.disk_nvme_count ?? 0} ({formatStorageGb(row.original.disk_nvme_total_gb)})</p>
-                                      <p>Traffic: {row.original.traffic || "—"}</p>
-                                      <p>Bandwidth: {row.original.bandwidth ?? "—"} Mbit/s</p>
-                                    </div>
-                                  </section>
                                   <div className="rounded-lg border border-[var(--border)] bg-white p-3">
-                                    <SectionList entries={information} title="Information" />
+                                    <section>
+                                      <h4 className="mb-2 text-sm font-semibold text-slate-700">Information</h4>
+                                      <p className="mb-2 text-sm">
+                                        <a
+                                          className="font-semibold text-[var(--accent-strong)] underline underline-offset-2 hover:text-[var(--accent)]"
+                                          href={auctionUrl}
+                                          rel="noopener noreferrer"
+                                          target="_blank"
+                                        >
+                                          Auction ID: {row.original.server_id}
+                                        </a>
+                                      </p>
+                                      <ul className="space-y-1">
+                                        {informationWithNetwork.map((entry, index) => (
+                                          <li
+                                            key={`Information-${index}-${entry}`}
+                                            className="text-sm text-slate-600"
+                                          >
+                                            {entry}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </section>
                                   </div>
                                   <div className="rounded-lg border border-[var(--border)] bg-white p-3">
-                                    <SectionList entries={hddArr} title="Drive Labels" />
+                                    <SectionList entries={hddArr} title="Drive Details" />
                                   </div>
                                 </div>
                               </td>
