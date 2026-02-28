@@ -180,12 +180,41 @@ function drivePill(label: string, count: number | null, totalGb: number | null) 
   );
 }
 
-function driveTooltip(label: string, sizesGb: number[]): string {
-  if (sizesGb.length === 0) {
-    return `No ${label} drives`;
-  }
-  const items = sizesGb.map((size) => `- ${formatStorageGb(size)}`);
-  return `${label} drives:\n${items.join("\n")}`;
+function DrivePillWithTooltip({
+  label,
+  count,
+  totalGb,
+  sizesGb,
+}: {
+  label: string;
+  count: number | null;
+  totalGb: number | null;
+  sizesGb: number[];
+}) {
+  return (
+    <div className="group relative inline-flex">
+      <button
+        className="rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        onClick={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        type="button"
+      >
+        {drivePill(label, count, totalGb)}
+      </button>
+      <div className="pointer-events-none absolute left-1/2 top-full z-30 mt-1 hidden w-max max-w-[220px] -translate-x-1/2 rounded-md bg-slate-900 px-2 py-1.5 text-[12px] text-white shadow-xl group-hover:block group-focus-within:block">
+        <p className="mb-1 font-semibold">{label} drives</p>
+        {sizesGb.length === 0 ? (
+          <p className="text-slate-200">No drives</p>
+        ) : (
+          <ul className="list-disc space-y-0.5 pl-4 text-slate-100">
+            {sizesGb.map((size, index) => (
+              <li key={`${label}-drive-${index}-${size}`}>{formatStorageGb(size)}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function SortHeader({
@@ -329,15 +358,24 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
 
           return (
             <div className="flex flex-nowrap gap-1">
-              <span title={driveTooltip("HDD", hddSizes)}>
-                {drivePill("HDD", row.original.disk_hdd_count, row.original.disk_hdd_total_gb)}
-              </span>
-              <span title={driveTooltip("SATA", sataSizes)}>
-                {drivePill("SATA", row.original.disk_sata_count, row.original.disk_sata_total_gb)}
-              </span>
-              <span title={driveTooltip("NVMe", nvmeSizes)}>
-                {drivePill("NVMe", row.original.disk_nvme_count, row.original.disk_nvme_total_gb)}
-              </span>
+              <DrivePillWithTooltip
+                count={row.original.disk_hdd_count}
+                label="HDD"
+                sizesGb={hddSizes}
+                totalGb={row.original.disk_hdd_total_gb}
+              />
+              <DrivePillWithTooltip
+                count={row.original.disk_sata_count}
+                label="SATA"
+                sizesGb={sataSizes}
+                totalGb={row.original.disk_sata_total_gb}
+              />
+              <DrivePillWithTooltip
+                count={row.original.disk_nvme_count}
+                label="NVMe"
+                sizesGb={nvmeSizes}
+                totalGb={row.original.disk_nvme_total_gb}
+              />
             </div>
           );
         },
@@ -390,7 +428,6 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
   });
 
   const rows = table.getRowModel().rows;
-  const bestServer = table.getSortedRowModel().rows[0]?.original;
   const benchmarkSync = data.sync.find((entry) => entry.dataset === "benchmark");
   const sbSync = data.sync.find((entry) => entry.dataset === "sb");
 
@@ -635,16 +672,6 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
             <div className="text-sm text-slate-600">
               <span className="font-semibold text-slate-900">{numberFormatter.format(filteredServers.length)}</span> matching
               servers
-            </div>
-            <div className="text-sm text-slate-600">
-              Best current by sort:{" "}
-              {bestServer ? (
-                <span className="font-semibold text-[var(--accent-strong)]">
-                  #{bestServer.server_id} ({formatMetric(bestServer.cpu_per_price)} CPU/€)
-                </span>
-              ) : (
-                "—"
-              )}
             </div>
           </div>
 
