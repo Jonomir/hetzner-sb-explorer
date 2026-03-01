@@ -12,7 +12,17 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
+import {
+  CartesianGrid,
+  ResponsiveContainer,
+  Scatter,
+  ScatterChart,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import type { DashboardData, ServerRow } from "@/lib/types";
 
@@ -69,6 +79,58 @@ function parseJsonNumberList(text: string): number[] {
   } catch {
     return [];
   }
+}
+
+type ValueScatterPoint = {
+  serverId: number;
+  region: string | null;
+  datacenter: string | null;
+  cpu: string;
+  price: number;
+  cpuPerPrice: number;
+  outlierDelta: number;
+  isOutlier: boolean;
+};
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function formatAxisEuro(value: number): string {
+  return `€${Math.round(value)}`;
+}
+
+function formatAxisMetric(value: number): string {
+  return decimalFormatter.format(value);
+}
+
+function ValueScatterTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: ValueScatterPoint }>;
+}) {
+  if (!active || !payload || payload.length === 0) {
+    return null;
+  }
+
+  const point = payload[0].payload;
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-xs shadow-lg">
+      <p className="font-semibold text-slate-900">#{point.serverId}</p>
+      <p className="text-slate-700">{point.cpu}</p>
+      <p className="text-slate-600">{point.region ?? "—"} · {point.datacenter ?? "—"}</p>
+      <p className="mt-1 text-slate-700">Monthly: {formatMoney(point.price)}</p>
+      <p className="text-slate-700">CPU/€: {formatMetric(point.cpuPerPrice)}</p>
+      <p className="text-slate-700">Outlier delta: +{formatMetric(point.outlierDelta)}</p>
+    </div>
+  );
 }
 
 function formatMoney(value: number | null): string {
@@ -239,6 +301,8 @@ function SortHeader({
 }
 
 export function ServerDashboard({ data }: { data: DashboardData }) {
+  const router = useRouter();
+  const [isRefreshing, startRefreshTransition] = useTransition();
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
   const [cpuVendor, setCpuVendor] = useState("all");
   const [cpuNameQuery, setCpuNameQuery] = useState("");
@@ -332,6 +396,78 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
     selectedRegions,
   ]);
 
+  const valueScatter = useMemo(() => {
+    const eligible = filteredServers
+      .filter(
+        (row) =>
+          row.price != null &&
+          row.price > 0 &&
+          row.cpu_per_price != null &&
+          row.cpu_per_price > 0,
+      )
+      .map((row) => ({
+        serverId: row.server_id,
+        region: row.region,
+        datacenter: row.datacenter,
+        cpu: row.cpu,
+        price: row.price as number,
+        cpuPerPrice: row.cpu_per_price as number,
+      }));
+
+    if (eligible.length === 0) {
+      return {
+        points: [] as ValueScatterPoint[],
+        outliers: [] as ValueScatterPoint[],
+      };
+    }
+
+    const bucketSize = 25;
+    const buckets = new Map<number, number[]>();
+    for (const row of eligible) {
+      const bucket = Math.floor(row.price / bucketSize);
+      const values = buckets.get(bucket);
+      if (values) {
+        values.push(row.cpuPerPrice);
+      } else {
+        buckets.set(bucket, [row.cpuPerPrice]);
+      }
+    }
+
+    const bucketMedian = new Map<number, number>();
+    for (const [bucket, values] of buckets) {
+      bucketMedian.set(bucket, median(values));
+    }
+
+    const ranked = eligible.map((row) => {
+      const bucket = Math.floor(row.price / bucketSize);
+      const baseline = bucketMedian.get(bucket) ?? 0;
+      return {
+        ...row,
+        outlierDelta: row.cpuPerPrice - baseline,
+      };
+    });
+
+    const outlierIds = new Set(
+      ranked
+        .filter((row) => row.outlierDelta > 0)
+        .sort((a, b) => b.outlierDelta - a.outlierDelta)
+        .slice(0, 10)
+        .map((row) => row.serverId),
+    );
+
+    const points = ranked.map((row) => ({
+      ...row,
+      isOutlier: outlierIds.has(row.serverId),
+    }));
+
+    const outliers = points
+      .filter((row) => row.isOutlier)
+      .sort((a, b) => b.outlierDelta - a.outlierDelta)
+      .slice(0, 8);
+
+    return { points, outliers };
+  }, [filteredServers]);
+
   useEffect(() => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
   }, [
@@ -359,6 +495,11 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
     const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const parsed = Date.parse(data.loadedAtUtc);
+    setNowMs(Number.isNaN(parsed) ? Date.now() : parsed);
+  }, [data.loadedAtUtc]);
 
   const columns = useMemo<ColumnDef<ServerRow>[]>(
     () => [
@@ -523,6 +664,17 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
     setter(String(Math.max(0, baseValue + delta)));
   };
 
+  const scatterNormal = valueScatter.points.filter((point) => !point.isOutlier);
+  const scatterOutliers = valueScatter.points.filter((point) => point.isOutlier);
+  const scatterPriceMax =
+    valueScatter.points.length > 0
+      ? Math.max(...valueScatter.points.map((point) => point.price)) * 1.05
+      : 100;
+  const scatterCpuPerEuroMax =
+    valueScatter.points.length > 0
+      ? Math.max(...valueScatter.points.map((point) => point.cpuPerPrice)) * 1.1
+      : 100;
+
   return (
     <main className="min-h-screen p-4 md:p-8">
       <div className="mx-auto max-w-[1600px] space-y-4 animate-[fade-in_260ms_ease-out]">
@@ -537,15 +689,45 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
                 Filter fast, inspect details, and compare value by CPU performance.
               </p>
             </div>
-            <div className="rounded-xl bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--accent-strong)]">
-              <p>
-                <span className="font-semibold">SB Sync:</span>{" "}
-                {formatTimeAgo(sbSync?.synced_at_utc, nowMs)}
-              </p>
-              <p>
-                <span className="font-semibold">Bench Sync:</span>{" "}
-                {formatTimeAgo(benchmarkSync?.synced_at_utc, nowMs)}
-              </p>
+            <div className="flex items-center gap-2 self-start md:self-auto">
+              <button
+                aria-label="Refresh data from database"
+                className="inline-flex h-9 w-9 flex-none items-center justify-center rounded-full border border-[var(--border)] bg-white text-[var(--accent-strong)] shadow-sm transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isRefreshing}
+                onClick={() => {
+                  startRefreshTransition(() => {
+                    router.refresh();
+                  });
+                }}
+                title={isRefreshing ? "Refreshing..." : "Refresh data"}
+                type="button"
+              >
+                <svg
+                  aria-hidden="true"
+                  className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M21 2v6h-6" />
+                  <path d="M3 11a9 9 0 0 1 15-6.7L21 8" />
+                  <path d="M3 22v-6h6" />
+                  <path d="M21 13a9 9 0 0 1-15 6.7L3 16" />
+                </svg>
+              </button>
+              <div className="rounded-xl bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--accent-strong)]">
+                <p>
+                  <span className="font-semibold">SB Sync:</span>{" "}
+                  {formatTimeAgo(sbSync?.synced_at_utc, nowMs)}
+                </p>
+                <p>
+                  <span className="font-semibold">Bench Sync:</span>{" "}
+                  {formatTimeAgo(benchmarkSync?.synced_at_utc, nowMs)}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -903,6 +1085,87 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
               </div>
             ) : null}
           </div>
+        </section>
+
+        <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_12px_30px_rgba(23,23,28,0.06)]">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Value Outliers</h2>
+              <p className="text-xs text-slate-500">Monthly price vs CPU/€, highlighted by same-price bucket outlier score.</p>
+            </div>
+            <p className="text-xs text-slate-500">
+              {numberFormatter.format(valueScatter.points.length)} points in chart
+            </p>
+          </div>
+
+          {valueScatter.points.length === 0 ? (
+            <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-sm text-slate-500">
+              No chart data for current filters.
+            </div>
+          ) : (
+            <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-2">
+                <div className="h-[320px] min-w-0 w-full">
+                  <ResponsiveContainer height={320} minWidth={0} width="100%">
+                    <ScatterChart margin={{ top: 16, right: 20, bottom: 8, left: 0 }}>
+                      <CartesianGrid stroke="#e2e8f0" strokeDasharray="4 4" />
+                      <XAxis
+                        dataKey="price"
+                        domain={[0, scatterPriceMax]}
+                        name="Monthly"
+                        tickFormatter={formatAxisEuro}
+                        type="number"
+                      />
+                      <YAxis
+                        dataKey="cpuPerPrice"
+                        domain={[0, scatterCpuPerEuroMax]}
+                        name="CPU/€"
+                        tickFormatter={formatAxisMetric}
+                        type="number"
+                      />
+                      <Tooltip content={<ValueScatterTooltip />} />
+                      <Scatter data={scatterNormal} fill="#94a3b8" name="Servers" />
+                      <Scatter data={scatterOutliers} fill="#d50c2d" name="Outliers" />
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="flex h-[340px] min-h-0 flex-col rounded-xl border border-[var(--border)] bg-white p-3">
+                <h3 className="mb-2 text-sm font-semibold text-slate-800">Top outliers by bucket</h3>
+                {valueScatter.outliers.length === 0 ? (
+                  <p className="text-xs text-slate-500">No positive outliers in current filters.</p>
+                ) : (
+                  <ul className="min-h-0 space-y-2 overflow-y-auto pr-1">
+                    {valueScatter.outliers.map((point) => (
+                      <li key={`outlier-${point.serverId}`} className="rounded-lg border border-[var(--border)] p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <a
+                            className="text-sm font-semibold text-[var(--accent-strong)] underline underline-offset-2"
+                            href={`https://www.hetzner.com/sb/#search=${point.serverId}`}
+                            rel="noopener noreferrer"
+                            target="_blank"
+                          >
+                            #{point.serverId}
+                          </a>
+                          <span className="text-xs font-semibold text-[var(--accent-strong)]">
+                            +{formatMetric(point.outlierDelta)}
+                          </span>
+                        </div>
+                        <p className="truncate text-xs text-slate-700">{point.cpu}</p>
+                        <p className="text-xs text-slate-500">
+                          {point.region ?? "—"} · {point.datacenter ?? "—"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          {formatMoney(point.price)} · CPU/€ {formatMetric(point.cpuPerPrice)}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_12px_30px_rgba(23,23,28,0.06)]">
