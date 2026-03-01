@@ -1,101 +1,105 @@
-# Hetzner SB Sync Pipeline
+# Hetzner Serverboerse Explorer
 
-## Current Scope (Python DB-first)
-This project uses a SQLite-first sync pipeline.
+SQLite-first pipeline + Next.js UI for exploring Hetzner Serverboerse offers with CPU benchmark enrichment.
 
-- SQLite is the single source of truth.
-- No CSV/JSON artifact files are produced by sync commands.
-- Latest-only data model (no historical snapshots).
-- Exact CPU name matching between Hetzner and benchmark data.
+## What This Does
+- Syncs Hetzner Serverboerse data into SQLite.
+- Syncs CPU benchmark data (cpubenchmark.net) into SQLite.
+- Enriches servers with benchmark metrics (`cpumark`, cores/threads, value ratios).
+- Provides a local frontend with:
+  - fast filters/sorting/pagination
+  - drive-type and drive-size filtering
+  - expandable per-row details
+  - value scatter plot (price vs CPU/€)
+  - pricing toggles for VAT (+19%) and fixed IPv4 fee (+2.02 EUR)
 
-Default database path:
+No CSV/JSON output artifacts are produced by the sync commands. SQLite is the system of record.
+
+## Repo Layout
+- `scraper.py`: CLI sync pipeline (SQLite write path)
+- `frontend/`: Next.js app (SQLite read path)
+- `data/`: local DB (ignored by git)
+
+## Requirements
+- Python 3.11+ (3.10+ may also work)
+- Node.js 20+ and npm
+
+## Quick Start
+1. Initialize and sync data:
+```bash
+python3 scraper.py sync-all
+```
+
+2. Start frontend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+3. Open:
+- [http://localhost:3000](http://localhost:3000)
+
+## CLI Commands
+Default DB path for all commands:
 - `./data/sb.sqlite`
 
-## Commands
 Initialize schema:
-
 ```bash
 python3 scraper.py db-init
 ```
 
-`db-init` recreates the schema (drops and recreates tables/views).
-
-Sync benchmark dataset (cpubenchmark.net):
-
+Sync CPU benchmark dataset:
 ```bash
 python3 scraper.py bench-sync
 ```
 
 Sync Hetzner Serverboerse + enrichment:
-
 ```bash
 python3 scraper.py sb-sync
 ```
 
-Run full pipeline:
-
+Run both in sequence:
 ```bash
 python3 scraper.py sync-all
 ```
 
 Use a custom DB path:
-
 ```bash
 python3 scraper.py sync-all --db-path ./data/custom.sqlite
 ```
 
-## Schema Overview
-Core tables:
+## SQLite Schema (High Level)
+- `benchmark_cpu`: benchmark catalog (`name_norm`, `cpumark`, cores/logicals/cpu_count)
+- `sb_server`: normalized Hetzner server snapshot + derived filter fields
+- `sb_enrichment`: server-to-benchmark join + value metrics
+- `dataset_sync`: dataset-level sync metadata (`benchmark`, `sb`)
+- `servers_enriched` (view): frontend read model combining all of the above
 
-- `benchmark_cpu`
-  - `bench_id`, `name`, `name_norm`, `cpumark`, `cores`, `logicals`, `cpu_count`
-- `sb_server`
-  - lean server fields for filtering, pricing, and CPU matching
-  - includes derived `region` from datacenter prefix (`FSN`, `NBG`, `HEL`)
-  - includes filter-friendly flags:
-    - `cpu_vendor` (`AMD`, `Intel`, `Unknown`)
-    - `is_ecc`
-    - `has_gpu`
-    - `has_inic`
-  - includes `drive_count` (total drives from Hetzner feed)
-  - includes canonical drive columns:
-    - `disk_hdd_count`, `disk_hdd_total_gb`, `disk_hdd_sizes_json`
-    - `disk_sata_count`, `disk_sata_total_gb`, `disk_sata_sizes_json`
-    - `disk_nvme_count`, `disk_nvme_total_gb`, `disk_nvme_sizes_json`
-  - includes passthrough detail JSON columns for expandable frontend rows:
-    - `information_json`
-    - `description_json`
-    - `hdd_arr_json`
-    - `dist_json`
-- `sb_enrichment`
-  - `bench_id` mapping + `price_to_cpu` and `cpu_per_price`
-- `dataset_sync`
-  - dataset-level sync metadata (`benchmark` and `sb`)
+## Data Quality Warnings During Sync
+`sb-sync` prints warnings for:
+- unmatched CPUs (exact normalized name match failed)
+- unrecognized datacenter->region mapping
+- unknown CPU vendor parsing (not AMD/Intel)
+- missing/invalid prices affecting value metrics
 
-View:
+These are warning-only; sync still completes.
 
-- `servers_enriched`
-  - joins server + benchmark + enrichment for frontend/API queries
-  - includes `bench_cores`, `bench_threads` (derived from `cores * logicals`), `bench_cpu_count`
-  - includes quick drive flags derived from counts: `has_hdd`, `has_sata`, `has_nvme`
+## Frontend Notes
+- Frontend reads SQLite in read-only mode from `../data/sb.sqlite`.
+- Optional override:
+```bash
+SB_DB_PATH=/absolute/path/to/sb.sqlite npm run dev
+```
+- The refresh button reloads data from DB in-app (`router.refresh()`), without full browser reload.
+- It does not trigger scraper sync itself; run scraper commands separately.
 
-## Frontend Plan (Deferred)
-Target stack for display layer:
+## Data Sources
+- Hetzner Serverboerse feed:  
+  `https://www.hetzner.com/_resources/app/data/app/live_data_sb_EUR.json`
+- CPU benchmark:  
+  `https://www.cpubenchmark.net/CPU_mega_page.html`  
+  `https://www.cpubenchmark.net/data/`
 
-- Next.js frontend + API routes
-- SQLite as backend store
-- AG Grid Community for table UX
+Use of external data should comply with each provider's terms/licensing.
 
-Phase 1 frontend goals:
-
-- Fast table browsing with sorting/filtering/pagination
-- Top filter controls (datacenter, price ranges, benchmark ranges, search)
-- Metadata display from `dataset_sync`
-
-Not in frontend phase 1:
-
-- Triggering refresh from the app
-- Historical comparisons
-- Export tooling
-
-Refresh will continue through CLI (`sync-all`) until app-triggered refresh is added.

@@ -90,18 +90,7 @@ type ValueScatterPoint = {
   cpu: string;
   price: number;
   cpuPerPrice: number;
-  outlierDelta: number;
-  isOutlier: boolean;
 };
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[middle - 1] + sorted[middle]) / 2
-    : sorted[middle];
-}
 
 function formatAxisEuro(value: number): string {
   return `€${Math.round(value)}`;
@@ -130,7 +119,6 @@ function ValueScatterTooltip({
       <p className="text-slate-600">{point.region ?? "—"} · {point.datacenter ?? "—"}</p>
       <p className="mt-1 text-slate-700">Monthly: {formatMoney(point.price)}</p>
       <p className="text-slate-700">CPU/€: {formatMetric(point.cpuPerPrice)}</p>
-      <p className="text-slate-700">Outlier delta: +{formatMetric(point.outlierDelta)}</p>
     </div>
   );
 }
@@ -449,8 +437,8 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
     monthlyPriceForRow,
   ]);
 
-  const valueScatter = useMemo(() => {
-    const eligible = filteredServers
+  const valueScatterPoints = useMemo(() => {
+    return filteredServers
       .filter(
         (row) =>
           monthlyPriceForRow(row) != null &&
@@ -466,59 +454,6 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
         price: monthlyPriceForRow(row) as number,
         cpuPerPrice: cpuPerEuroForRow(row) as number,
       }));
-
-    if (eligible.length === 0) {
-      return {
-        points: [] as ValueScatterPoint[],
-        outliers: [] as ValueScatterPoint[],
-      };
-    }
-
-    const bucketSize = 25;
-    const buckets = new Map<number, number[]>();
-    for (const row of eligible) {
-      const bucket = Math.floor(row.price / bucketSize);
-      const values = buckets.get(bucket);
-      if (values) {
-        values.push(row.cpuPerPrice);
-      } else {
-        buckets.set(bucket, [row.cpuPerPrice]);
-      }
-    }
-
-    const bucketMedian = new Map<number, number>();
-    for (const [bucket, values] of buckets) {
-      bucketMedian.set(bucket, median(values));
-    }
-
-    const ranked = eligible.map((row) => {
-      const bucket = Math.floor(row.price / bucketSize);
-      const baseline = bucketMedian.get(bucket) ?? 0;
-      return {
-        ...row,
-        outlierDelta: row.cpuPerPrice - baseline,
-      };
-    });
-
-    const outlierIds = new Set(
-      ranked
-        .filter((row) => row.outlierDelta > 0)
-        .sort((a, b) => b.outlierDelta - a.outlierDelta)
-        .slice(0, 10)
-        .map((row) => row.serverId),
-    );
-
-    const points = ranked.map((row) => ({
-      ...row,
-      isOutlier: outlierIds.has(row.serverId),
-    }));
-
-    const outliers = points
-      .filter((row) => row.isOutlier)
-      .sort((a, b) => b.outlierDelta - a.outlierDelta)
-      .slice(0, 8);
-
-    return { points, outliers };
   }, [cpuPerEuroForRow, filteredServers, monthlyPriceForRow]);
 
   const filterResetKey = useMemo(
@@ -748,15 +683,16 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
     setter(String(Math.max(0, baseValue + delta)));
   };
 
-  const scatterNormal = valueScatter.points.filter((point) => !point.isOutlier);
-  const scatterOutliers = valueScatter.points.filter((point) => point.isOutlier);
+  const highlightedScatterServerIds = new Set(rows.slice(0, 3).map((row) => row.original.server_id));
+  const scatterNormal = valueScatterPoints.filter((point) => !highlightedScatterServerIds.has(point.serverId));
+  const scatterHighlighted = valueScatterPoints.filter((point) => highlightedScatterServerIds.has(point.serverId));
   const scatterPriceMax =
-    valueScatter.points.length > 0
-      ? Math.max(...valueScatter.points.map((point) => point.price)) * 1.05
+    valueScatterPoints.length > 0
+      ? Math.max(...valueScatterPoints.map((point) => point.price)) * 1.05
       : 100;
   const scatterCpuPerEuroMax =
-    valueScatter.points.length > 0
-      ? Math.max(...valueScatter.points.map((point) => point.cpuPerPrice)) * 1.1
+    valueScatterPoints.length > 0
+      ? Math.max(...valueScatterPoints.map((point) => point.cpuPerPrice)) * 1.1
       : 100;
 
   return (
@@ -1186,79 +1122,43 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_12px_30px_rgba(23,23,28,0.06)]">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Value Outliers</h2>
-              <p className="text-xs text-slate-500">Monthly price vs CPU/€, highlighted by same-price bucket outlier score.</p>
+              <h2 className="text-base font-semibold text-slate-900">Value Scatter</h2>
+              <p className="text-xs text-slate-500">Monthly price vs CPU/€, with top 3 visible table rows highlighted.</p>
             </div>
             <p className="text-xs text-slate-500">
-              {numberFormatter.format(valueScatter.points.length)} points in chart
+              {numberFormatter.format(valueScatterPoints.length)} points in chart
             </p>
           </div>
 
-          {valueScatter.points.length === 0 ? (
+          {valueScatterPoints.length === 0 ? (
             <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-sm text-slate-500">
               No chart data for current filters.
             </div>
           ) : (
-            <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-2">
-                <div className="h-[320px] min-w-0 w-full">
-                  <ResponsiveContainer height={320} minWidth={0} width="100%">
-                    <ScatterChart margin={{ top: 16, right: 20, bottom: 8, left: 0 }}>
-                      <CartesianGrid stroke="#e2e8f0" strokeDasharray="4 4" />
-                      <XAxis
-                        dataKey="price"
-                        domain={[0, scatterPriceMax]}
-                        name="Monthly"
-                        tickFormatter={formatAxisEuro}
-                        type="number"
-                      />
-                      <YAxis
-                        dataKey="cpuPerPrice"
-                        domain={[0, scatterCpuPerEuroMax]}
-                        name="CPU/€"
-                        tickFormatter={formatAxisMetric}
-                        type="number"
-                      />
-                      <Tooltip content={<ValueScatterTooltip />} />
-                      <Scatter data={scatterNormal} fill="#94a3b8" name="Servers" />
-                      <Scatter data={scatterOutliers} fill="#d50c2d" name="Outliers" />
-                    </ScatterChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              <div className="flex h-[340px] min-h-0 flex-col rounded-xl border border-[var(--border)] bg-white p-3">
-                <h3 className="mb-2 text-sm font-semibold text-slate-800">Top outliers by bucket</h3>
-                {valueScatter.outliers.length === 0 ? (
-                  <p className="text-xs text-slate-500">No positive outliers in current filters.</p>
-                ) : (
-                  <ul className="min-h-0 space-y-2 overflow-y-auto pr-1">
-                    {valueScatter.outliers.map((point) => (
-                      <li key={`outlier-${point.serverId}`} className="rounded-lg border border-[var(--border)] p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <a
-                            className="text-sm font-semibold text-[var(--accent-strong)] underline underline-offset-2"
-                            href={`https://www.hetzner.com/sb/#search=${point.serverId}`}
-                            rel="noopener noreferrer"
-                            target="_blank"
-                          >
-                            #{point.serverId}
-                          </a>
-                          <span className="text-xs font-semibold text-[var(--accent-strong)]">
-                            +{formatMetric(point.outlierDelta)}
-                          </span>
-                        </div>
-                        <p className="truncate text-xs text-slate-700">{point.cpu}</p>
-                        <p className="text-xs text-slate-500">
-                          {point.region ?? "—"} · {point.datacenter ?? "—"}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-600">
-                          {formatMoney(point.price)} · CPU/€ {formatMetric(point.cpuPerPrice)}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+            <div className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-2">
+              <div className="h-[320px] min-w-0 w-full">
+                <ResponsiveContainer height={320} minWidth={0} width="100%">
+                  <ScatterChart margin={{ top: 16, right: 20, bottom: 8, left: 0 }}>
+                    <CartesianGrid stroke="#e2e8f0" strokeDasharray="4 4" />
+                    <XAxis
+                      dataKey="price"
+                      domain={[0, scatterPriceMax]}
+                      name="Monthly"
+                      tickFormatter={formatAxisEuro}
+                      type="number"
+                    />
+                    <YAxis
+                      dataKey="cpuPerPrice"
+                      domain={[0, scatterCpuPerEuroMax]}
+                      name="CPU/€"
+                      tickFormatter={formatAxisMetric}
+                      type="number"
+                    />
+                    <Tooltip content={<ValueScatterTooltip />} />
+                    <Scatter data={scatterNormal} fill="#94a3b8" name="Servers" />
+                    <Scatter data={scatterHighlighted} fill="#d50c2d" name="Top 3 rows" />
+                  </ScatterChart>
+                </ResponsiveContainer>
               </div>
             </div>
           )}
