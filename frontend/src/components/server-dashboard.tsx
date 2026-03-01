@@ -13,7 +13,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useRouter } from "next/navigation";
-import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import {
   CartesianGrid,
   ResponsiveContainer,
@@ -41,6 +41,8 @@ const decimalFormatter = new Intl.NumberFormat("en-US", {
 const relativeTimeFormatter = new Intl.RelativeTimeFormat("en", {
   numeric: "auto",
 });
+const VAT_FACTOR = 1.19;
+const IPV4_SURCHARGE = 2.02;
 
 const numberSortNullLast: SortingFn<ServerRow> = (rowA, rowB, columnId) => {
   const a = rowA.getValue<number | null>(columnId);
@@ -201,6 +203,32 @@ function boolPill(enabled: boolean, label: string) {
   );
 }
 
+function SwitchToggle({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-2 py-1.5 text-xs font-medium text-slate-700">
+      <span className="relative inline-flex">
+        <input
+          checked={checked}
+          className="peer sr-only"
+          onChange={(event) => onChange(event.target.checked)}
+          type="checkbox"
+        />
+        <span className="h-5 w-9 rounded-full bg-slate-300 transition peer-checked:bg-[var(--accent)]" />
+        <span className="pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
+      </span>
+      {label}
+    </label>
+  );
+}
+
 function SectionList({ title, entries }: { title: string; entries: string[] }) {
   if (entries.length === 0) {
     return (
@@ -303,6 +331,8 @@ function SortHeader({
 export function ServerDashboard({ data }: { data: DashboardData }) {
   const router = useRouter();
   const [isRefreshing, startRefreshTransition] = useTransition();
+  const [includeVat, setIncludeVat] = useState(false);
+  const [includeIpv4Fee, setIncludeIpv4Fee] = useState(false);
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
   const [cpuVendor, setCpuVendor] = useState("all");
   const [cpuNameQuery, setCpuNameQuery] = useState("");
@@ -322,7 +352,7 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
   const [needsSata, setNeedsSata] = useState(false);
   const [needsNvme, setNeedsNvme] = useState(false);
   const [expandedServerId, setExpandedServerId] = useState<number | null>(null);
-  const [sorting, setSorting] = useState<SortingState>([{ id: "cpu_per_price", desc: true }]);
+  const [sorting, setSorting] = useState<SortingState>([{ id: "cpu_per_price_effective", desc: true }]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [showAdvancedDriveFilters, setShowAdvancedDriveFilters] = useState(false);
   const [nowMs, setNowMs] = useState(() => {
@@ -339,16 +369,38 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
   const minHddDriveTbValue = parseInputNumber(minHddDriveTb);
   const minSataDriveTbValue = parseInputNumber(minSataDriveTb);
   const minNvmeDriveTbValue = parseInputNumber(minNvmeDriveTb);
+  const vatMultiplier = includeVat ? VAT_FACTOR : 1;
+  const ipv4Surcharge = includeIpv4Fee ? IPV4_SURCHARGE : 0;
+
+  const monthlyPriceForRow = useCallback(
+    (row: ServerRow): number | null => {
+      if (row.price == null) return null;
+      return row.price * vatMultiplier + ipv4Surcharge;
+    },
+    [ipv4Surcharge, vatMultiplier],
+  );
+
+  const cpuPerEuroForRow = useCallback(
+    (row: ServerRow): number | null => {
+      const effectivePrice = monthlyPriceForRow(row);
+      if (effectivePrice == null || effectivePrice <= 0 || row.bench_cpumark == null || row.bench_cpumark <= 0) {
+        return null;
+      }
+      return row.bench_cpumark / effectivePrice;
+    },
+    [monthlyPriceForRow],
+  );
 
   const filteredServers = useMemo(() => {
     const cpuQuery = cpuNameQuery.trim().toLowerCase();
     return data.servers.filter((row) => {
+      const effectivePrice = monthlyPriceForRow(row);
       if (selectedRegions.length > 0) {
         if (!row.region || !selectedRegions.includes(row.region)) return false;
       }
       if (cpuVendor !== "all" && row.cpu_vendor !== cpuVendor) return false;
       if (cpuQuery && !row.cpu.toLowerCase().includes(cpuQuery)) return false;
-      if (maxPriceValue != null && (row.price == null || row.price > maxPriceValue)) return false;
+      if (maxPriceValue != null && (effectivePrice == null || effectivePrice > maxPriceValue)) return false;
       if (minRamValue != null && (row.ram_size == null || row.ram_size < minRamValue)) return false;
       if (minCoresValue != null && (row.bench_cores == null || row.bench_cores < minCoresValue)) return false;
       if (eccOnly && row.is_ecc !== 1) return false;
@@ -394,24 +446,25 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
     needsNvme,
     needsSata,
     selectedRegions,
+    monthlyPriceForRow,
   ]);
 
   const valueScatter = useMemo(() => {
     const eligible = filteredServers
       .filter(
         (row) =>
-          row.price != null &&
-          row.price > 0 &&
-          row.cpu_per_price != null &&
-          row.cpu_per_price > 0,
+          monthlyPriceForRow(row) != null &&
+          (monthlyPriceForRow(row) as number) > 0 &&
+          cpuPerEuroForRow(row) != null &&
+          (cpuPerEuroForRow(row) as number) > 0,
       )
       .map((row) => ({
         serverId: row.server_id,
         region: row.region,
         datacenter: row.datacenter,
         cpu: row.cpu,
-        price: row.price as number,
-        cpuPerPrice: row.cpu_per_price as number,
+        price: monthlyPriceForRow(row) as number,
+        cpuPerPrice: cpuPerEuroForRow(row) as number,
       }));
 
     if (eligible.length === 0) {
@@ -466,30 +519,59 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
       .slice(0, 8);
 
     return { points, outliers };
-  }, [filteredServers]);
+  }, [cpuPerEuroForRow, filteredServers, monthlyPriceForRow]);
+
+  const filterResetKey = useMemo(
+    () =>
+      JSON.stringify({
+        selectedRegions,
+        cpuVendor,
+        cpuNameQuery,
+        maxPrice,
+        includeVat,
+        includeIpv4Fee,
+        minRam,
+        minCores,
+        minHddTb,
+        minSataTb,
+        minNvmeTb,
+        minHddDriveTb,
+        minSataDriveTb,
+        minNvmeDriveTb,
+        eccOnly,
+        gpuOnly,
+        inicOnly,
+        needsHdd,
+        needsSata,
+        needsNvme,
+      }),
+    [
+      selectedRegions,
+      cpuVendor,
+      cpuNameQuery,
+      maxPrice,
+      includeVat,
+      includeIpv4Fee,
+      minRam,
+      minCores,
+      minHddTb,
+      minSataTb,
+      minNvmeTb,
+      minHddDriveTb,
+      minSataDriveTb,
+      minNvmeDriveTb,
+      eccOnly,
+      gpuOnly,
+      inicOnly,
+      needsHdd,
+      needsSata,
+      needsNvme,
+    ],
+  );
 
   useEffect(() => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
-  }, [
-    selectedRegions,
-    cpuVendor,
-    cpuNameQuery,
-    maxPrice,
-    minRam,
-    minCores,
-    minHddTb,
-    minSataTb,
-    minNvmeTb,
-    minHddDriveTb,
-    minSataDriveTb,
-    minNvmeDriveTb,
-    eccOnly,
-    gpuOnly,
-    inicOnly,
-    needsHdd,
-    needsSata,
-    needsNvme,
-  ]);
+  }, [filterResetKey]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -567,10 +649,11 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
         },
       },
       {
-        accessorKey: "price",
+        id: "price_effective",
+        accessorFn: (row) => monthlyPriceForRow(row),
         sortingFn: numberSortNullLast,
         header: ({ column }) => <SortHeader column={column} title="Monthly" />,
-        cell: ({ row }) => <span className="font-semibold text-slate-900">{formatMoney(row.original.price)}</span>,
+        cell: ({ row }) => <span className="font-semibold text-slate-900">{formatMoney(monthlyPriceForRow(row.original))}</span>,
       },
       {
         accessorKey: "bench_cpumark",
@@ -579,10 +662,11 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
         cell: ({ row }) => formatNumber(row.original.bench_cpumark),
       },
       {
-        accessorKey: "cpu_per_price",
+        id: "cpu_per_price_effective",
+        accessorFn: (row) => cpuPerEuroForRow(row),
         sortingFn: numberSortNullLast,
         header: ({ column }) => <SortHeader column={column} title="CPU/€" />,
-        cell: ({ row }) => <span className="font-semibold text-[var(--accent-strong)]">{formatMetric(row.original.cpu_per_price)}</span>,
+        cell: ({ row }) => <span className="font-semibold text-[var(--accent-strong)]">{formatMetric(cpuPerEuroForRow(row.original))}</span>,
       },
       {
         id: "flags",
@@ -597,7 +681,7 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
         ),
       },
     ],
-    [],
+    [cpuPerEuroForRow, monthlyPriceForRow],
   );
 
   // TanStack Table's hook shape is not compiler-memoizable; this is expected.
@@ -689,44 +773,56 @@ export function ServerDashboard({ data }: { data: DashboardData }) {
                 Filter fast, inspect details, and compare value by CPU performance.
               </p>
             </div>
-            <div className="flex items-center gap-2 self-start md:self-auto">
-              <button
-                aria-label="Refresh data from database"
-                className="inline-flex h-9 w-9 flex-none items-center justify-center rounded-full border border-[var(--border)] bg-white text-[var(--accent-strong)] shadow-sm transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={isRefreshing}
-                onClick={() => {
-                  startRefreshTransition(() => {
-                    router.refresh();
-                  });
-                }}
-                title={isRefreshing ? "Refreshing..." : "Refresh data"}
-                type="button"
-              >
-                <svg
-                  aria-hidden="true"
-                  className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
+            <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+              <SwitchToggle
+                checked={includeVat}
+                label="Include 19% VAT"
+                onChange={setIncludeVat}
+              />
+              <SwitchToggle
+                checked={includeIpv4Fee}
+                label="Add IPv4 (+2,02 €)"
+                onChange={setIncludeIpv4Fee}
+              />
+              <div className="ml-1 flex items-center gap-2">
+                <button
+                  aria-label="Refresh data from database"
+                  className="inline-flex h-9 w-9 flex-none items-center justify-center rounded-full border border-[var(--border)] bg-white text-[var(--accent-strong)] shadow-sm transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isRefreshing}
+                  onClick={() => {
+                    startRefreshTransition(() => {
+                      router.refresh();
+                    });
+                  }}
+                  title={isRefreshing ? "Refreshing..." : "Refresh data"}
+                  type="button"
                 >
-                  <path d="M21 2v6h-6" />
-                  <path d="M3 11a9 9 0 0 1 15-6.7L21 8" />
-                  <path d="M3 22v-6h6" />
-                  <path d="M21 13a9 9 0 0 1-15 6.7L3 16" />
-                </svg>
-              </button>
-              <div className="rounded-xl bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--accent-strong)]">
-                <p>
-                  <span className="font-semibold">SB Sync:</span>{" "}
-                  {formatTimeAgo(sbSync?.synced_at_utc, nowMs)}
-                </p>
-                <p>
-                  <span className="font-semibold">Bench Sync:</span>{" "}
-                  {formatTimeAgo(benchmarkSync?.synced_at_utc, nowMs)}
-                </p>
+                  <svg
+                    aria-hidden="true"
+                    className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M21 2v6h-6" />
+                    <path d="M3 11a9 9 0 0 1 15-6.7L21 8" />
+                    <path d="M3 22v-6h6" />
+                    <path d="M21 13a9 9 0 0 1-15 6.7L3 16" />
+                  </svg>
+                </button>
+                <div className="rounded-xl bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--accent-strong)]">
+                  <p>
+                    <span className="font-semibold">SB Sync:</span>{" "}
+                    {formatTimeAgo(sbSync?.synced_at_utc, nowMs)}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Bench Sync:</span>{" "}
+                    {formatTimeAgo(benchmarkSync?.synced_at_utc, nowMs)}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
