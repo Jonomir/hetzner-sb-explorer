@@ -2,7 +2,7 @@
 
 SQLite-first pipeline + Next.js UI for exploring Hetzner Serverboerse offers with CPU benchmark enrichment.
 
-<video src="./assets/hetzner-sb-explorer-demo.mov" controls muted loop playsinline></video>
+![Hetzner SB Explorer Demo](assets/hetzner-sb-explorer-demo.gif)
 
 ## What This Does
 - Syncs Hetzner Serverboerse data into SQLite.
