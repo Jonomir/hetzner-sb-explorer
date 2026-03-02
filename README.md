@@ -2,6 +2,8 @@
 
 SQLite-first pipeline + Next.js UI for exploring Hetzner Serverboerse offers with CPU benchmark enrichment.
 
+<video src="./assets/hetzner-sb-explorer-demo.mov" controls muted loop playsinline></video>
+
 ## What This Does
 - Syncs Hetzner Serverboerse data into SQLite.
 - Syncs CPU benchmark data (cpubenchmark.net) into SQLite.
@@ -102,4 +104,3 @@ SB_DB_PATH=/absolute/path/to/sb.sqlite npm run dev
   `https://www.cpubenchmark.net/data/`
 
 Use of external data should comply with each provider's terms/licensing.
-
